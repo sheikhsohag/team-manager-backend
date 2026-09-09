@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS companies (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   name          VARCHAR(150) NOT NULL,
   slug          VARCHAR(160) NOT NULL,
+  -- 'company' = full workspace (teams/members); 'individual' = solo workspace
+  type          ENUM('company','individual') NOT NULL DEFAULT 'company',
   status        ENUM('active','inactive') NOT NULL DEFAULT 'active',
   -- true = the company is allowed to self-manage its own permission boundary
   self_manage_permissions TINYINT(1) NOT NULL DEFAULT 0,
@@ -236,8 +238,12 @@ CREATE TABLE IF NOT EXISTS teams (
 CREATE TABLE IF NOT EXISTS team_members (
   team_id BIGINT UNSIGNED NOT NULL,
   user_id BIGINT UNSIGNED NOT NULL,
+  -- lead / assistant_lead / member designation WITHIN this team
+  role_in_team ENUM('lead','assistant_lead','member') NOT NULL DEFAULT 'member',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (team_id, user_id),
   KEY idx_tm_user (user_id),
+  KEY idx_tm_role (team_id, role_in_team),
   CONSTRAINT fk_tm_team FOREIGN KEY (team_id) REFERENCES teams (id) ON DELETE CASCADE,
   CONSTRAINT fk_tm_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -258,27 +264,127 @@ CREATE TABLE IF NOT EXISTS projects (
   CONSTRAINT fk_projects_team FOREIGN KEY (team_id) REFERENCES teams (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ---------------------------------------------------------------------
+-- task_statuses: DYNAMIC, per-company status set (replaces the old ENUM).
+-- Team leads / admins can add statuses; each carries a note (description).
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS task_statuses (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  company_id  BIGINT UNSIGNED NOT NULL,
+  name        VARCHAR(80) NOT NULL,
+  note        VARCHAR(255) NULL,               -- the "description as note" from the spec
+  color       VARCHAR(20) NOT NULL DEFAULT 'grey',
+  sort_order  INT NOT NULL DEFAULT 0,
+  is_default  TINYINT(1) NOT NULL DEFAULT 0,   -- status new tasks get
+  is_done     TINYINT(1) NOT NULL DEFAULT 0,   -- terminal / completed bucket
+  created_by  BIGINT UNSIGNED NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_status_company_name (company_id, name),
+  KEY idx_status_company (company_id),
+  CONSTRAINT fk_status_company FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE,
+  CONSTRAINT fk_status_creator FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS tasks (
   id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   company_id   BIGINT UNSIGNED NOT NULL,
+  team_id      BIGINT UNSIGNED NULL,
   project_id   BIGINT UNSIGNED NULL,
+  parent_id    BIGINT UNSIGNED NULL,            -- non-null => this row is a subtask
   title        VARCHAR(200) NOT NULL,
+  heading      VARCHAR(255) NULL,               -- "task heading" (sub-title / summary line)
   description  TEXT NULL,
-  status       ENUM('todo','in_progress','done','reopened') NOT NULL DEFAULT 'todo',
+  status_id    BIGINT UNSIGNED NULL,            -- dynamic status (task_statuses)
   priority     ENUM('low','medium','high','urgent') NOT NULL DEFAULT 'medium',
   assignee_id  BIGINT UNSIGNED NULL,
   created_by   BIGINT UNSIGNED NULL,
+  due_date     DATE NULL,
   deleted_at   DATETIME NULL,
   created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_tasks_company (company_id),
+  KEY idx_tasks_team (team_id),
   KEY idx_tasks_project (project_id),
+  KEY idx_tasks_parent (parent_id),
   KEY idx_tasks_assignee (assignee_id),
+  KEY idx_tasks_status (status_id),
+  KEY idx_tasks_created (created_at),
   CONSTRAINT fk_tasks_company FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE,
+  CONSTRAINT fk_tasks_team FOREIGN KEY (team_id) REFERENCES teams (id) ON DELETE SET NULL,
   CONSTRAINT fk_tasks_project FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE SET NULL,
+  CONSTRAINT fk_tasks_parent FOREIGN KEY (parent_id) REFERENCES tasks (id) ON DELETE CASCADE,
+  CONSTRAINT fk_tasks_status FOREIGN KEY (status_id) REFERENCES task_statuses (id) ON DELETE SET NULL,
   CONSTRAINT fk_tasks_assignee FOREIGN KEY (assignee_id) REFERENCES users (id) ON DELETE SET NULL,
   CONSTRAINT fk_tasks_creator FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- task_comments
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS task_comments (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  task_id     BIGINT UNSIGNED NOT NULL,
+  user_id     BIGINT UNSIGNED NULL,
+  body        TEXT NOT NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_tc_task (task_id),
+  CONSTRAINT fk_tc_task FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
+  CONSTRAINT fk_tc_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- task_attachments (file metadata; bytes live on disk under /uploads)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS task_attachments (
+  id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  task_id       BIGINT UNSIGNED NOT NULL,
+  uploaded_by   BIGINT UNSIGNED NULL,
+  original_name VARCHAR(255) NOT NULL,
+  stored_name   VARCHAR(255) NOT NULL,
+  mime_type     VARCHAR(120) NULL,
+  size_bytes    BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_ta_task (task_id),
+  CONSTRAINT fk_ta_task FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
+  CONSTRAINT fk_ta_user FOREIGN KEY (uploaded_by) REFERENCES users (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- task_shares: a single task made visible to a specific user
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS task_shares (
+  task_id     BIGINT UNSIGNED NOT NULL,
+  user_id     BIGINT UNSIGNED NOT NULL,
+  granted_by  BIGINT UNSIGNED NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (task_id, user_id),
+  KEY idx_ts_user (user_id),
+  CONSTRAINT fk_ts_task FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
+  CONSTRAINT fk_ts_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+  CONSTRAINT fk_ts_granter FOREIGN KEY (granted_by) REFERENCES users (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- task_list_shares: viewer can see ALL of owner's tasks ("show this list")
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS task_list_shares (
+  company_id  BIGINT UNSIGNED NOT NULL,
+  owner_id    BIGINT UNSIGNED NOT NULL,        -- whose tasks are exposed
+  viewer_id   BIGINT UNSIGNED NOT NULL,        -- who may see them
+  granted_by  BIGINT UNSIGNED NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (owner_id, viewer_id),
+  KEY idx_tls_viewer (viewer_id),
+  KEY idx_tls_company (company_id),
+  CONSTRAINT fk_tls_company FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE,
+  CONSTRAINT fk_tls_owner FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE CASCADE,
+  CONSTRAINT fk_tls_viewer FOREIGN KEY (viewer_id) REFERENCES users (id) ON DELETE CASCADE,
+  CONSTRAINT fk_tls_granter FOREIGN KEY (granted_by) REFERENCES users (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

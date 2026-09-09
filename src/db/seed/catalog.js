@@ -51,6 +51,8 @@ const PERMISSIONS = {
     ['team.delete', 'delete', 'Delete Teams'],
     ['team.add_member', 'add_member', 'Add Members'],
     ['team.remove_member', 'remove_member', 'Remove Members'],
+    ['team.manage_leads', 'manage_leads', 'Assign Team Leads', 'Promote / demote lead & assistant lead'],
+    ['team.grant_member_perms', 'grant_member_perms', 'Grant Task Access to Members', 'Let leads give members task-create / visibility'],
   ],
   project: [
     ['project.view', 'view', 'View Projects'],
@@ -74,6 +76,8 @@ const PERMISSIONS = {
     ['task.share', 'share', 'Share Tasks'],
     ['task.attach_file', 'attach_file', 'Attach Files'],
     ['task.track_time', 'track_time', 'Track Time'],
+    ['task.status_manage', 'status_manage', 'Manage Task Statuses', 'Create / edit the dynamic status list'],
+    ['task.view_all', 'view_all', 'View All Company Tasks', 'See every task in the company (admin dashboard)'],
   ],
   requirement: [
     ['requirement.create', 'create', 'Create Requirements'],
@@ -137,9 +141,11 @@ const ROLES = [
       'company.view', 'company.update', 'company.permissions',
       'user.view', 'user.create', 'user.update', 'user.suspend', 'user.restore', 'user.reset_password',
       'team.view', 'team.create', 'team.update', 'team.delete', 'team.add_member', 'team.remove_member',
+      'team.manage_leads', 'team.grant_member_perms',
       'project.view', 'project.create', 'project.update', 'project.delete',
-      'task.view', 'task.create', 'task.update', 'task.assign', 'task.reassign',
+      'task.view', 'task.view_all', 'task.create', 'task.update', 'task.delete', 'task.assign', 'task.reassign',
       'task.change_status', 'task.change_priority', 'task.complete', 'task.reopen', 'task.comment', 'task.add_note',
+      'task.share', 'task.attach_file', 'task.status_manage',
       'report.view', 'report.generate', 'report.export',
       'admin.view', 'admin.create', 'admin.update', 'admin.permissions',
       'audit.view',
@@ -170,11 +176,23 @@ const ROLES = [
   },
   {
     name: 'Team Lead', slug: 'team-lead', level: 'team', is_system: true,
-    description: 'Leads a team. Explicitly scoped — receives nothing beyond assigned permissions.',
+    description: 'Leads a team. Auto task-create; can manage members & grant member access (company admin may limit).',
     permissions: [
-      'team.view',
+      'team.view', 'team.add_member', 'team.remove_member', 'team.grant_member_perms',
+      'task.view', 'task.create', 'task.update', 'task.assign', 'task.reassign',
+      'task.change_status', 'task.change_priority', 'task.complete', 'task.reopen',
+      'task.comment', 'task.add_note', 'task.share', 'task.attach_file', 'task.status_manage',
+      'report.view',
+    ],
+  },
+  {
+    name: 'Assistant Team Lead', slug: 'assistant-team-lead', level: 'team', is_system: true,
+    description: 'Co-leads a team. Like a lead but cannot remove members; company admin may limit further.',
+    permissions: [
+      'team.view', 'team.add_member', 'team.grant_member_perms',
       'task.view', 'task.create', 'task.update', 'task.assign',
-      'task.change_status', 'task.comment', 'task.add_note',
+      'task.change_status', 'task.complete', 'task.reopen',
+      'task.comment', 'task.add_note', 'task.share', 'task.attach_file', 'task.status_manage',
       'report.view',
     ],
   },
@@ -258,11 +276,32 @@ const TEMPLATES = [
   },
 ];
 
+// ---- Default dynamic statuses seeded for every new company ----------------
+// [name, note, color, sort_order, is_default, is_done]
+const DEFAULT_STATUSES = [
+  ['To Do', 'Not started yet', 'grey', 10, 1, 0],
+  ['In Progress', 'Actively being worked on', 'amber', 20, 0, 0],
+  ['In Review', 'Awaiting review / approval', 'blue', 30, 0, 0],
+  ['Blocked', 'Cannot proceed — waiting on something', 'red', 40, 0, 0],
+  ['Done', 'Completed', 'green', 50, 0, 1],
+];
+
+// Maps a team_members.role_in_team value to the RBAC role slug that grants the
+// matching default capabilities. Assigning a lead/assistant therefore gives
+// them (e.g.) auto task-create, which a company admin can later override.
+const TEAM_ROLE_SLUG = {
+  lead: 'team-lead',
+  assistant_lead: 'assistant-team-lead',
+  member: 'team-member',
+};
+
 module.exports = {
   GROUPS,
   PERMISSIONS,
   ROLES,
   TEMPLATES,
+  DEFAULT_STATUSES,
+  TEAM_ROLE_SLUG,
   flatPermissions,
   ALL_PERMISSION_KEYS,
 };

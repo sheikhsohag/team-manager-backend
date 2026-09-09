@@ -13,7 +13,8 @@ const path = require('path');
 const mysql = require('mysql2/promise');
 
 const TABLES_IN_DROP_ORDER = [
-  'tasks', 'projects', 'team_members', 'teams',
+  'task_list_shares', 'task_shares', 'task_attachments', 'task_comments',
+  'tasks', 'task_statuses', 'projects', 'team_members', 'teams',
   'audit_logs',
   'permission_template_items', 'permission_templates',
   'company_permissions', 'company_roles',

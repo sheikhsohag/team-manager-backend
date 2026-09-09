@@ -14,6 +14,7 @@ require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const { pool, query, queryOne, execute } = require('../../config/db');
 const catalog = require('./catalog');
+const { seedCompanyStatuses } = require('../../services/provision.service');
 
 const ROUNDS = Number(process.env.BCRYPT_ROUNDS || 10);
 
@@ -186,14 +187,19 @@ async function seedDemoData(roleIdBySlug, permIdByKey) {
   const companyA = await createCompany('Acme Corp', 'acme');
   const companyB = await createCompany('Globex Inc', 'globex');
 
+  // Dynamic statuses for each demo company
+  await seedCompanyStatuses(execute, companyA);
+  await seedCompanyStatuses(execute, companyB);
+
   // Admin A — extra powers via user ALLOW overrides
   const adminA = await createUser(companyA, 'Admin A', 'admina@acme.test', 'company-admin');
   // Admin B — same role, fewer powers via user DENY overrides
   const adminB = await createUser(companyA, 'Admin B', 'adminb@acme.test', 'company-admin');
   const adminC = await createUser(companyB, 'Admin C', 'adminc@globex.test', 'company-manager');
 
-  await createUser(companyA, 'Lead Larry', 'larry@acme.test', 'team-lead');
-  await createUser(companyA, 'Member Mary', 'mary@acme.test', 'team-member');
+  const larry = await createUser(companyA, 'Lead Larry', 'larry@acme.test', 'team-lead');
+  const mary = await createUser(companyA, 'Member Mary', 'mary@acme.test', 'team-member');
+  const nate = await createUser(companyA, 'Member Nate', 'nate@acme.test', 'team-member');
 
   // Demonstrate user-specific overrides:
   // Admin A gets extra ALLOW: task.delete, report.export, user.delete, admin.create
@@ -229,16 +235,47 @@ async function seedDemoData(roleIdBySlug, permIdByKey) {
   const teamRes = await execute('INSERT INTO teams (company_id, name) VALUES (:c, :n)', {
     c: companyA, n: 'Platform Team',
   });
+  const teamId = teamRes.insertId;
   const projRes = await execute('INSERT INTO projects (company_id, team_id, name) VALUES (:c, :t, :n)', {
-    c: companyA, t: teamRes.insertId, n: 'Website Revamp',
+    c: companyA, t: teamId, n: 'Website Revamp',
   });
+
+  // Seat Larry as lead, Mary & Nate as members of the Platform Team
+  await execute("INSERT INTO team_members (team_id, user_id, role_in_team) VALUES (:t, :u, 'lead')", { t: teamId, u: larry });
+  await execute("INSERT INTO team_members (team_id, user_id, role_in_team) VALUES (:t, :u, 'member')", { t: teamId, u: mary });
+  await execute("INSERT INTO team_members (team_id, user_id, role_in_team) VALUES (:t, :u, 'member')", { t: teamId, u: nate });
+
+  // Company A statuses (fetch a couple for demo tasks)
+  const inProg = await queryOne("SELECT id FROM task_statuses WHERE company_id = :c AND name = 'In Progress'", { c: companyA });
+  const todo = await queryOne("SELECT id FROM task_statuses WHERE company_id = :c AND name = 'To Do'", { c: companyA });
+
+  const mainTask = await execute(
+    `INSERT INTO tasks (company_id, team_id, project_id, title, heading, description, status_id, priority, assignee_id, created_by)
+     VALUES (:c, :team, :p, 'Design landing page', 'Marketing site refresh', 'Create the new hero + pricing sections.', :st, 'high', :a, :cb)`,
+    { c: companyA, team: teamId, p: projRes.insertId, st: inProg ? inProg.id : null, a: mary, cb: larry }
+  );
+  // A subtask under it
   await execute(
-    `INSERT INTO tasks (company_id, project_id, title, status, priority, assignee_id, created_by)
-     VALUES (:c, :p, 'Design landing page', 'in_progress', 'high', :a, :cb)`,
-    { c: companyA, p: projRes.insertId, a: adminA, cb: adminA }
+    `INSERT INTO tasks (company_id, team_id, parent_id, title, status_id, priority, assignee_id, created_by)
+     VALUES (:c, :team, :parent, 'Export hero images', :st, 'medium', :a, :cb)`,
+    { c: companyA, team: teamId, parent: mainTask.insertId, st: todo ? todo.id : null, a: mary, cb: larry }
+  );
+  // Give Mary an explicit task.create ALLOW (lead granted it) so she can create tasks
+  const taskCreate = await queryOne("SELECT id FROM permissions WHERE `key` = 'task.create'");
+  if (taskCreate) {
+    await execute(
+      `INSERT INTO user_permissions (user_id, permission_id, effect) VALUES (:u, :p, 'allow')
+       ON DUPLICATE KEY UPDATE effect = 'allow'`,
+      { u: mary, p: taskCreate.id }
+    );
+  }
+  // Let Nate see Mary's task list ("show this list" demo)
+  await execute(
+    `INSERT INTO task_list_shares (company_id, owner_id, viewer_id, granted_by) VALUES (:c, :o, :v, :g)`,
+    { c: companyA, o: mary, v: nate, g: larry }
   );
 
-  console.log('Seeded demo data (Acme Corp, Globex Inc, Admin A/B/C, overrides, boundary).');
+  console.log('Seeded demo data (Acme Corp, Globex Inc, Admin A/B/C, Larry/Mary/Nate, teams, statuses, tasks).');
   console.log('Demo login password for all demo users: Password@123');
 }
 

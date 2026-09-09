@@ -14,9 +14,11 @@ const template = require('../controllers/template.controller');
 const audit = require('../controllers/audit.controller');
 const task = require('../controllers/task.controller');
 const team = require('../controllers/team.controller');
+const status = require('../controllers/status.controller');
 const report = require('../controllers/report.controller');
 const permissionService = require('../services/permission.service');
 const { asyncHandler } = require('../middleware/error');
+const { upload } = require('../middleware/upload');
 
 const router = express.Router();
 
@@ -26,6 +28,7 @@ const VIEW_ADMINS = 'admin.view';
 
 // ---------------------------------------------------------------- Auth ------
 router.post('/auth/login', auth.login);
+router.post('/auth/register', auth.register);
 router.get('/auth/me', authenticate, auth.me);
 
 // -------------------------------------------------------------- Self (me) ---
@@ -94,11 +97,39 @@ router.put('/admin/company/permissions', authenticate, can('company.permissions'
 router.get('/super-admin/audit-logs', authenticate, can('audit.view'), audit.list);
 router.get('/audit-logs', authenticate, can('audit.view'), audit.list);
 
+// ------------------------------------------------------- Task statuses ------
+// Any authenticated user may read the status list (to render pickers/filters).
+router.get('/statuses', authenticate, status.list);
+router.post('/statuses', authenticate, can('task.status_manage'), status.create);
+router.put('/statuses/:id', authenticate, can('task.status_manage'), status.update);
+router.delete('/statuses/:id', authenticate, can('task.status_manage'), status.remove);
+
 // --------------------------------------------------------------- Tasks ------
 router.get('/tasks', authenticate, can('task.view'), task.list);
 router.post('/tasks', authenticate, can('task.create'), task.create);
+router.get('/tasks/:id', authenticate, can('task.view'), task.getOne);
+router.put('/tasks/:id', authenticate, can('task.update'), task.update);
 router.post('/tasks/:id/status', authenticate, can('task.change_status'), task.changeStatus);
 router.delete('/tasks/:id', authenticate, can('task.delete'), task.remove);
+
+// Task comments
+router.get('/tasks/:id/comments', authenticate, can('task.view'), task.listComments);
+router.post('/tasks/:id/comments', authenticate, can('task.comment'), task.addComment);
+
+// Task attachments (multipart field name: "file")
+router.get('/tasks/:id/attachments', authenticate, can('task.view'), task.listAttachments);
+router.post('/tasks/:id/attachments', authenticate, can('task.attach_file'), upload.single('file'), task.uploadAttachment);
+router.get('/attachments/:attId/download', authenticate, can('task.view'), task.downloadAttachment);
+router.delete('/attachments/:attId', authenticate, can('task.attach_file'), task.removeAttachment);
+
+// Per-task sharing
+router.post('/tasks/:id/share', authenticate, can('task.share'), task.shareTask);
+router.delete('/tasks/:id/share/:userId', authenticate, can('task.share'), task.unshareTask);
+
+// Company roster for pickers (assignee / filters) — broader than user.view.
+router.get('/company/users', authenticate,
+  canAny(['user.view', 'task.create', 'task.assign', 'task.view_all', 'team.grant_member_perms']),
+  team.companyUsers);
 
 // --------------------------------------------------------------- Teams ------
 router.get('/teams', authenticate, can('team.view'), team.list);
@@ -106,7 +137,17 @@ router.post('/teams', authenticate, can('team.create'), team.create);
 router.delete('/teams/:id', authenticate, can('team.delete'), team.remove);
 router.get('/teams/:id/members', authenticate, can('team.view'), team.members);
 router.post('/teams/:id/members', authenticate, can('team.add_member'), team.addMember);
+router.put('/teams/:id/members/:userId/role', authenticate, can('team.manage_leads'), team.setMemberRole);
 router.delete('/teams/:id/members/:userId', authenticate, can('team.remove_member'), team.removeMember);
+
+// Lead-grants-member access (task permissions)
+router.get('/teams/:id/members/:userId/access', authenticate, canAny(['team.grant_member_perms', MANAGE_PERMS]), team.memberAccess);
+router.put('/teams/:id/members/:userId/access', authenticate, can('team.grant_member_perms'), team.setMemberAccess);
+
+// Task-list access ("let X see Y's tasks")
+router.get('/task-access', authenticate, canAny(['team.grant_member_perms', 'task.view_all', MANAGE_PERMS]), team.listAccess);
+router.post('/task-access', authenticate, can('team.grant_member_perms'), team.grantAccess);
+router.delete('/task-access/:ownerId/:viewerId', authenticate, can('team.grant_member_perms'), team.revokeAccess);
 
 // -------------------------------------------------------------- Reports -----
 router.get('/reports', authenticate, can('report.view'), report.summary);

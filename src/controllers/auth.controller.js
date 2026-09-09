@@ -11,6 +11,13 @@ const login = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
+// POST /auth/register  { name, email, password, accountType, companyName? }
+const register = asyncHandler(async (req, res) => {
+  const { name, email, password, accountType = 'company', companyName = null } = req.body || {};
+  const result = await authService.register({ name, email, password, accountType, companyName });
+  res.status(201).json(result);
+});
+
 // GET /auth/me — current user + their effective permission keys (for UI gating)
 const me = asyncHandler(async (req, res) => {
   const eff = await permissionService.effectiveForUi(req.user.id);
@@ -22,4 +29,4 @@ const me = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { login, me };
+module.exports = { login, register, me };
