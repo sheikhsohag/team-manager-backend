@@ -90,6 +90,21 @@ const companyUsers = asyncHandler(async (req, res) => {
   res.json({ users: rows });
 });
 
+// GET /me/teams — the teams the current user belongs to, with their role.
+// Available to ANY authenticated user (no team.view needed) so a plain member
+// can see their own memberships on the dashboard.
+const myTeams = asyncHandler(async (req, res) => {
+  const rows = await query(
+    `SELECT t.id, t.name, m.role_in_team
+       FROM team_members m
+       JOIN teams t ON t.id = m.team_id AND t.deleted_at IS NULL
+      WHERE m.user_id = :u
+      ORDER BY FIELD(m.role_in_team,'lead','assistant_lead','member'), t.name`,
+    { u: req.user.id }
+  );
+  res.json({ teams: rows });
+});
+
 // GET /teams
 const list = asyncHandler(async (req, res) => {
   const companyId = scope(req);
@@ -284,7 +299,7 @@ const revokeAccess = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  companyUsers,
+  companyUsers, myTeams,
   list, create, remove, members, addMember, setMemberRole, removeMember,
   memberAccess, setMemberAccess,
   listAccess, grantAccess, revokeAccess,

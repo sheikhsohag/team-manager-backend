@@ -36,8 +36,11 @@ async function authenticate(req, res, next) {
     }
 
     const user = await queryOne(
-      `SELECT id, company_id, name, email, status, is_super_admin
-         FROM users WHERE id = :id AND deleted_at IS NULL`,
+      `SELECT u.id, u.company_id, u.name, u.email, u.status, u.is_super_admin,
+              c.type AS company_type, c.name AS company_name
+         FROM users u
+         LEFT JOIN companies c ON c.id = u.company_id
+        WHERE u.id = :id AND u.deleted_at IS NULL`,
       { id: payload.sub }
     );
     if (!user) return res.status(401).json({ error: 'User no longer exists' });
@@ -50,6 +53,8 @@ async function authenticate(req, res, next) {
       company_id: user.company_id,
       status: user.status,
       is_super_admin: !!user.is_super_admin,
+      company_type: user.company_type || null,
+      company_name: user.company_name || null,
     };
     next();
   } catch (err) {

@@ -38,6 +38,9 @@ router.get('/me/permissions', authenticate, asyncHandler(async (req, res) => {
   res.json(await permissionService.effectiveForUi(req.user.id));
 }));
 
+// The teams the current user belongs to (any authenticated user).
+router.get('/me/teams', authenticate, team.myTeams);
+
 // --------------------------------------------------------- Permissions ------
 // Catalog is metadata; any authenticated user may read it to render matrices.
 router.get('/permissions', authenticate, permission.catalog);

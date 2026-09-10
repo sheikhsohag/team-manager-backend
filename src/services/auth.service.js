@@ -33,7 +33,10 @@ function verifyToken(token) {
 
 async function login(email, password) {
   const user = await queryOne(
-    'SELECT * FROM users WHERE email = :email AND deleted_at IS NULL',
+    `SELECT u.*, c.type AS company_type, c.name AS company_name
+       FROM users u
+       LEFT JOIN companies c ON c.id = u.company_id
+      WHERE u.email = :email AND u.deleted_at IS NULL`,
     { email: String(email || '').toLowerCase() }
   );
   if (!user) throw Object.assign(new Error('Invalid credentials'), { status: 401 });
@@ -52,6 +55,8 @@ function publicUser(u) {
   return {
     id: u.id, name: u.name, email: u.email, company_id: u.company_id,
     status: u.status, is_super_admin: !!u.is_super_admin,
+    company_type: u.company_type || null,
+    company_name: u.company_name || null,
   };
 }
 
@@ -128,7 +133,13 @@ async function register({ name, email, password, accountType = 'company', compan
     return newUserId;
   });
 
-  const user = await queryOne('SELECT * FROM users WHERE id = :id', { id: userId });
+  const user = await queryOne(
+    `SELECT u.*, c.type AS company_type, c.name AS company_name
+       FROM users u
+       LEFT JOIN companies c ON c.id = u.company_id
+      WHERE u.id = :id`,
+    { id: userId }
+  );
   const token = signToken(user);
   return { token, user: publicUser(user) };
 }
