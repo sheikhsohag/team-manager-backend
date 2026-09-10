@@ -2,15 +2,30 @@
 
 const { verifyToken } = require('../services/auth.service');
 const { queryOne } = require('../config/db');
+const { AUTH_COOKIE } = require('./cookieAuth');
+
+/** Read the raw auth token: prefer the httpOnly cookie, fall back to a Bearer header. */
+function readToken(req) {
+  // 1. httpOnly cookie — set by login, invisible to JavaScript (resists XSS/console theft).
+  const cookieHeader = req.headers.cookie || '';
+  for (const part of cookieHeader.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    const name = part.slice(0, eq).trim();
+    if (name === AUTH_COOKIE) return decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  // 2. Authorization: Bearer <token> — for curl / non-browser API clients.
+  const header = req.headers.authorization || '';
+  return header.startsWith('Bearer ') ? header.slice(7) : null;
+}
 
 /**
- * Authenticates the request from the `Authorization: Bearer <token>` header
- * and attaches the fresh user record to `req.user`.
+ * Authenticates the request from the auth cookie (or a Bearer header) and
+ * attaches the fresh user record to `req.user`.
  */
 async function authenticate(req, res, next) {
   try {
-    const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    const token = readToken(req);
     if (!token) return res.status(401).json({ error: 'Authentication required' });
 
     let payload;

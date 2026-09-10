@@ -29,6 +29,7 @@ const VIEW_ADMINS = 'admin.view';
 // ---------------------------------------------------------------- Auth ------
 router.post('/auth/login', auth.login);
 router.post('/auth/register', auth.register);
+router.post('/auth/logout', auth.logout);
 router.get('/auth/me', authenticate, auth.me);
 
 // -------------------------------------------------------------- Self (me) ---
